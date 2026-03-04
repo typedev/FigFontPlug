@@ -9,6 +9,14 @@
   "host_permissions": [
     "*://*.figma.com/*"
   ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.figma.com/*"],
+      "js": ["spoof.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
   "declarative_net_request": {
     "rule_resources": [
       {
