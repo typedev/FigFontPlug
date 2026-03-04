@@ -9,15 +9,36 @@
           "header": "User-Agent",
           "operation": "set",
           "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        },
+        {
+          "header": "Sec-CH-UA-Platform",
+          "operation": "set",
+          "value": "\"Windows\""
+        },
+        {
+          "header": "Sec-CH-UA-Platform-Version",
+          "operation": "set",
+          "value": "\"10.0.0\""
         }
       ]
     },
     "condition": {
-      "urlFilter": "*://*.figma.com/*",
+      "urlFilter": "||figma.com",
       "resourceTypes": [
         "main_frame",
         "sub_frame",
+        "stylesheet",
+        "script",
+        "image",
+        "font",
+        "object",
         "xmlhttprequest",
+        "ping",
+        "csp_report",
+        "media",
+        "websocket",
+        "webtransport",
+        "webbundle",
         "other"
       ]
     }
