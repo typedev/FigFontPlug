@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "FigFontPlug",
+  "version": "0.1.0",
+  "description": "Enables local font access in Figma on Linux",
+  "permissions": [
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "*://*.figma.com/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ua_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

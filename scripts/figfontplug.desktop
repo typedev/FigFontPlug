@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Figma
+Comment=Figma Design Tool (via FigFontPlug)
+Exec=google-chrome-stable --app=https://www.figma.com --load-extension=%h/WORK/FigFontPlug/extension --class=figma --user-data-dir=%h/.config/figma-app
+Icon=figma
+Type=Application
+Categories=Graphics;Design;
+StartupWMClass=figma

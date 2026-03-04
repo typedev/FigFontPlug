@@ -1,0 +1,14 @@
+# /etc/systemd/user/ or ~/.config/systemd/user/
+[Unit]
+Description=FigFontPlug — Local font helper for Figma
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/WORK/FigFontPlug/font_helper/.venv/bin/figfontplug-server
+Restart=on-failure
+RestartSec=5
+Environment=FIGFONTPLUG_FONTS_DIR=%h/figma-fonts
+
+[Install]
+WantedBy=default.target
