@@ -492,6 +492,31 @@ def create_app(fonts_dir: Path) -> web.Application:
             observer.stop()
             observer.join(timeout=5)
 
+    async def handle_set_port(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+            new_port = int(data["port"])
+        except (KeyError, ValueError, TypeError):
+            return web.Response(status=400, text="Missing or invalid 'port'")
+
+        if new_port == request.app["primary_port"]:
+            return web.json_response({"status": "ok", "port": new_port})
+
+        extra_sites = request.app.setdefault("extra_sites", {})
+        if new_port in extra_sites:
+            return web.json_response({"status": "ok", "port": new_port})
+
+        try:
+            runner = request.app["runner"]
+            site = web.TCPSite(runner, "127.0.0.1", new_port)
+            await site.start()
+            extra_sites[new_port] = site
+            print(f"Now also listening on http://127.0.0.1:{new_port}")
+            return web.json_response({"status": "ok", "port": new_port})
+        except OSError as e:
+            print(f"Failed to bind port {new_port}: {e}")
+            return web.json_response({"status": "error", "message": str(e)}, status=500)
+
     app = web.Application(middlewares=[cors_middleware])
     app.on_startup.append(start_watcher)
     app.on_cleanup.append(stop_watcher)
@@ -502,6 +527,7 @@ def create_app(fonts_dir: Path) -> web.Application:
     app.router.add_get("/figma/desktop/can-open-url", handle_can_open_url)
     app.router.add_get("/figma/font-preview", handle_font_preview)
     app.router.add_get("/figma/font-changes", handle_font_changes)
+    app.router.add_post("/figma/set-port", handle_set_port)
     # Handle OPTIONS for all /figma/ routes
     app.router.add_route("OPTIONS", "/figma/{path:.*}", lambda r: web.Response())
 
@@ -526,7 +552,22 @@ def main():
     print(f"Fonts directory: {fonts_dir}")
 
     app = create_app(fonts_dir)
-    web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+
+    async def run():
+        runner = web.AppRunner(app)
+        await runner.setup()
+        app["runner"] = runner
+        app["primary_port"] = args.port
+        site = web.TCPSite(runner, "127.0.0.1", args.port)
+        await site.start()
+        print(f"Listening on http://127.0.0.1:{args.port}")
+        # Run forever
+        await asyncio.Event().wait()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

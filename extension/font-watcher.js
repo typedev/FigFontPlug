@@ -2,14 +2,30 @@
 // Runs with the page's origin (https://www.figma.com) so CORS is allowed.
 // Communicates with notify.js (ISOLATED world) via CustomEvent on window.
 // Uses fetch() instead of EventSource to avoid noisy console errors on reconnect.
+// Listens for port detection from spoof.js to connect to the right server.
 
 (function () {
-  const SSE_URL = "http://127.0.0.1:44950/figma/font-changes";
+  const HOME_PORT = 44950;
   const RECONNECT_DELAY_MS = 5000;
+  let currentPort = HOME_PORT;
+  let controller = null;
+
+  window.addEventListener("figfontplug-port-detected", (e) => {
+    const port = e.detail;
+    if (port !== currentPort) {
+      currentPort = port;
+      // Restart SSE connection with new port
+      if (controller) controller.abort();
+    }
+  });
 
   async function connect() {
+    controller = new AbortController();
     try {
-      const resp = await fetch(SSE_URL);
+      const resp = await fetch(
+        `http://127.0.0.1:${currentPort}/figma/font-changes`,
+        { signal: controller.signal }
+      );
       if (!resp.ok || !resp.body) throw 0;
 
       const reader = resp.body.getReader();
