@@ -7,7 +7,7 @@ name = "figfontplug"
 version = "0.1.0"
 description = "Local font helper for Figma on Linux"
 readme = "../README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.9",

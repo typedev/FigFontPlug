@@ -202,7 +202,7 @@ FigFontPlug is designed to be transparent and minimal in scope:
 
 ## License
 
-Apache-2.0
+MIT
 
 ## Authors
 
