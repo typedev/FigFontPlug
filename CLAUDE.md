@@ -69,6 +69,6 @@ A Linux solution for using Figma with local fonts, consisting of a Chrome extens
 - [x] Test with variable fonts (.ttf with fvar table)
 - [x] Font preview rendering with real glyph outlines
 - [ ] Add HTTPS support (port 44950) with self-signed certificate
-- [ ] Add file watcher to auto-reload font list when ~/figma-fonts/ changes
+- [x] Add file watcher to auto-reload font list when ~/figma-fonts/ changes
 - [ ] Package for Fedora (RPM/COPR)
 - [ ] Consider publishing extension to Chrome Web Store ($5 one-time fee)

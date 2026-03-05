@@ -4,7 +4,10 @@ Serves local fonts from ~/figma-fonts/ using the Figma Font Helper protocol.
 """
 
 import argparse
+import asyncio
+import json
 import os
+import threading
 from functools import lru_cache
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
@@ -13,12 +16,16 @@ from aiohttp import web
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 PROTOCOL_VERSION = 23
 PACKAGE_VERSION = "126.1.2"
 DEFAULT_PORT = 44950
 DEFAULT_FONTS_DIR = Path.home() / "figma-fonts"
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
+DEBOUNCE_SECONDS = 2.0
+SSE_HEARTBEAT_SECONDS = 30
 
 
 def scan_fonts(fonts_dir: Path) -> dict[str, list[dict]]:
@@ -274,6 +281,73 @@ def _render_font_preview(
         tt.close()
 
 
+class FontChangeHandler(FileSystemEventHandler):
+    """Watches font directory for changes and notifies SSE clients via asyncio."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop):
+        self._loop = loop
+        self._debounce_handle: asyncio.TimerHandle | None = None
+        self._generation = 0
+        self._sse_clients: set[web.StreamResponse] = set()
+        self._lock = threading.Lock()
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    @property
+    def sse_clients(self) -> set[web.StreamResponse]:
+        return self._sse_clients
+
+    def _is_font_event(self, event) -> bool:
+        if event.is_directory:
+            return False
+        src = getattr(event, "src_path", "")
+        dest = getattr(event, "dest_path", "")
+        return (
+            Path(src).suffix.lower() in FONT_EXTENSIONS
+            or (dest and Path(dest).suffix.lower() in FONT_EXTENSIONS)
+        )
+
+    def on_created(self, event):
+        if self._is_font_event(event):
+            self._schedule_notify()
+
+    def on_deleted(self, event):
+        if self._is_font_event(event):
+            self._schedule_notify()
+
+    def on_modified(self, event):
+        if self._is_font_event(event):
+            self._schedule_notify()
+
+    def on_moved(self, event):
+        if self._is_font_event(event):
+            self._schedule_notify()
+
+    def _schedule_notify(self):
+        self._loop.call_soon_threadsafe(self._debounce_notify)
+
+    def _debounce_notify(self):
+        if self._debounce_handle is not None:
+            self._debounce_handle.cancel()
+        self._debounce_handle = self._loop.call_later(
+            DEBOUNCE_SECONDS, lambda: asyncio.ensure_future(self._fire_notify())
+        )
+
+    async def _fire_notify(self):
+        self._generation += 1
+        print(f"Font change detected (generation {self._generation})")
+        dead_clients = set()
+        data = json.dumps({"generation": self._generation})
+        for client in self._sse_clients:
+            try:
+                await client.write(f"event: fonts_changed\ndata: {data}\n\n".encode())
+            except Exception:
+                dead_clients.add(client)
+        self._sse_clients -= dead_clients
+
+
 def create_app(fonts_dir: Path) -> web.Application:
     """Create and configure the aiohttp application."""
     font_cache: dict[str, list[dict]] = scan_fonts(fonts_dir)
@@ -366,13 +440,68 @@ def create_app(fonts_dir: Path) -> web.Application:
             headers={"Cache-Control": "private, max-age=86400"},
         )
 
+    async def handle_font_changes(request: web.Request) -> web.StreamResponse:
+        resp = web.StreamResponse(
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Access-Control-Allow-Origin": "https://www.figma.com",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+        await resp.prepare(request)
+
+        watcher: FontChangeHandler = request.app["font_watcher"]
+        watcher.sse_clients.add(resp)
+
+        # Send initial generation
+        init_data = json.dumps({"generation": watcher.generation})
+        await resp.write(f"event: init\ndata: {init_data}\n\n".encode())
+
+        try:
+            while True:
+                await asyncio.sleep(SSE_HEARTBEAT_SECONDS)
+                await resp.write(b"event: ping\ndata: {}\n\n")
+        except (ConnectionResetError, ConnectionError, asyncio.CancelledError):
+            pass
+        finally:
+            watcher.sse_clients.discard(resp)
+
+        return resp
+
+    async def start_watcher(app: web.Application):
+        loop = asyncio.get_event_loop()
+        watcher = FontChangeHandler(loop)
+        app["font_watcher"] = watcher
+
+        observer = Observer()
+        watch_dir = str(fonts_dir.resolve())
+        # Create fonts dir if it doesn't exist so we can watch it
+        Path(watch_dir).mkdir(parents=True, exist_ok=True)
+        observer.schedule(watcher, watch_dir, recursive=True)
+        observer.start()
+        app["font_observer"] = observer
+        print(f"Watching {watch_dir} for font changes")
+
+    async def stop_watcher(app: web.Application):
+        observer: Observer = app.get("font_observer")
+        if observer:
+            observer.stop()
+            observer.join(timeout=5)
+
     app = web.Application(middlewares=[cors_middleware])
+    app.on_startup.append(start_watcher)
+    app.on_cleanup.append(stop_watcher)
     app.router.add_get("/figma/font-files", handle_font_files)
     app.router.add_get("/figma/font-file", handle_font_file)
     app.router.add_get("/figma/version", handle_version)
     app.router.add_get("/figma/update", handle_version)  # alias
     app.router.add_get("/figma/desktop/can-open-url", handle_can_open_url)
     app.router.add_get("/figma/font-preview", handle_font_preview)
+    app.router.add_get("/figma/font-changes", handle_font_changes)
     # Handle OPTIONS for all /figma/ routes
     app.router.add_route("OPTIONS", "/figma/{path:.*}", lambda r: web.Response())
 

@@ -15,6 +15,17 @@
       "js": ["spoof.js"],
       "run_at": "document_start",
       "world": "MAIN"
+    },
+    {
+      "matches": ["*://*.figma.com/*"],
+      "js": ["notify.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.figma.com/*"],
+      "js": ["font-watcher.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ],
   "declarative_net_request": {
