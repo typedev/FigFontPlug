@@ -4,10 +4,7 @@
 
 const AUTO_DISMISS_MS = 30000;
 
-console.log("[FigFontPlug] notify.js loaded (ISOLATED world)");
-
 window.addEventListener("figfontplug-fonts-changed", () => {
-  console.log("[FigFontPlug] notify.js received fonts-changed event, showing toast");
   showToast();
 });
 
