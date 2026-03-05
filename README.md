@@ -200,6 +200,24 @@ FigFontPlug is designed to be transparent and minimal in scope:
 - Check what's using the port: `ss -tlnp | grep 44950`
 - Kill the old process or restart the service: `systemctl --user restart figfontplug`
 
+**Figma uses a different port:**
+
+The font helper port is hardcoded in Figma's client-side JS. Historically it has been `44950`, but earlier versions used `18412`, and it may change in the future. To find the current port:
+
+1. Open Figma in Chrome, open DevTools (F12) → Network tab
+2. Filter by `127.0.0.1` or `localhost`
+3. Look for requests like `/figma/font-files` — the port in the URL is what Figma expects
+
+Then update the server and extension:
+```bash
+# Run server on the new port
+figfontplug-server --port <NEW_PORT>
+
+# Update the SSE URL in extension/font-watcher.js (line with SSE_URL)
+# Reload the extension in chrome://extensions
+```
+If using systemd, edit `~/.config/systemd/user/figfontplug.service` and add `--port <NEW_PORT>` to `ExecStart`, then `systemctl --user daemon-reload && systemctl --user restart figfontplug`.
+
 ## License
 
 MIT
