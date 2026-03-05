@@ -40,6 +40,10 @@ Figma (browser)                 Extension                     Font Helper (local
      |                     font-watcher.js --- SSE /figma/font-changes --->
      |                     <-- event: fonts_changed -----------------------
      |  <-- toast: "Font library updated" [Reload]                       |
+     |                              |                                    |
+     |  (if Figma uses a different port, e.g. 18412)                     |
+     |                     spoof.js --- POST /figma/set-port ------------>
+     |                              |   server binds to new port         |
 ```
 
 ## Installation
@@ -128,7 +132,7 @@ FigFontPlug/
 ├── extension/                  # Chrome Manifest V3 extension
 │   ├── manifest.json           # Extension configuration
 │   ├── rules.json              # HTTP header rewrite rules (User-Agent, Client Hints)
-│   ├── spoof.js                # Navigator property spoofing (MAIN world)
+│   ├── spoof.js                # Navigator spoofing + port detection (MAIN world)
 │   ├── font-watcher.js         # SSE client for font change events (MAIN world)
 │   ├── notify.js               # Toast notification UI (ISOLATED world, Shadow DOM)
 │   └── icons/
@@ -202,21 +206,7 @@ FigFontPlug is designed to be transparent and minimal in scope:
 
 **Figma uses a different port:**
 
-The font helper port is hardcoded in Figma's client-side JS. Historically it has been `44950`, but earlier versions used `18412`, and it may change in the future. To find the current port:
-
-1. Open Figma in Chrome, open DevTools (F12) → Network tab
-2. Filter by `127.0.0.1` or `localhost`
-3. Look for requests like `/figma/font-files` — the port in the URL is what Figma expects
-
-Then update the server and extension:
-```bash
-# Run server on the new port
-figfontplug-server --port <NEW_PORT>
-
-# Update the SSE URL in extension/font-watcher.js (line with SSE_URL)
-# Reload the extension in chrome://extensions
-```
-If using systemd, edit `~/.config/systemd/user/figfontplug.service` and add `--port <NEW_PORT>` to `ExecStart`, then `systemctl --user daemon-reload && systemctl --user restart figfontplug`.
+The font helper port is hardcoded in Figma's client-side JS. Historically it has been `44950`, but earlier versions used `18412`. FigFontPlug handles this automatically: the extension detects the port Figma uses by intercepting its requests, and if it differs from the default, tells the server to start listening on that port too via `POST /figma/set-port`. No manual configuration needed.
 
 ## License
 
