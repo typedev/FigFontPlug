@@ -5,9 +5,13 @@ Serves local fonts from ~/figma-fonts/ using the Figma Font Helper protocol.
 
 import argparse
 import os
+from functools import lru_cache
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 from aiohttp import web
+from fontTools.pens.svgPathPen import SVGPathPen
+from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
 
 PROTOCOL_VERSION = 23
@@ -183,6 +187,93 @@ def _get_name(name_table, name_id: int) -> str | None:
     return str(record)
 
 
+@lru_cache(maxsize=256)
+def _render_font_preview(
+    file_path: str, font_size: float, family: str, postscript: str, mtime: int
+) -> str:
+    """Render font preview as SVG with actual glyph outlines.
+
+    Matches macOS Figma Font Helper output format:
+    - Font coordinates (y-up), no Y-flip
+    - viewBox with negative y (ascender above baseline)
+    - data-scale attribute on SVG element
+    """
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+
+    # For .ttc files, find the font index matching the postscript name
+    font_number = 0
+    if suffix == ".ttc":
+        tt_probe = TTFont(path, fontNumber=0)
+        num_fonts = tt_probe.reader.numFonts
+        tt_probe.close()
+        for i in range(num_fonts):
+            tt_try = TTFont(path, fontNumber=i)
+            ps = _get_name(tt_try["name"], 6)
+            tt_try.close()
+            if ps == postscript:
+                font_number = i
+                break
+
+    tt = TTFont(path, fontNumber=font_number)
+    try:
+        glyph_set = tt.getGlyphSet()
+        cmap = tt.getBestCmap()
+        if cmap is None:
+            cmap = {}
+
+        upm = tt["head"].unitsPerEm
+        ascender = tt["hhea"].ascender
+        descender = tt["hhea"].descender
+        scale = font_size / upm
+
+        paths = []
+        x_cursor = 0.0
+
+        for ch in family:
+            code = ord(ch)
+            glyph_name = cmap.get(code)
+            if glyph_name is None or glyph_name not in glyph_set:
+                space_name = cmap.get(0x20)
+                if space_name and space_name in glyph_set:
+                    x_cursor += glyph_set[space_name].width
+                continue
+
+            svg_pen = SVGPathPen(glyph_set)
+            # Scale with Y-negate: font y-up → SVG y-down, matching macOS output
+            t_pen = TransformPen(svg_pen, (scale, 0, 0, -scale, x_cursor * scale, 0))
+            glyph_set[glyph_name].draw(t_pen)
+
+            d = svg_pen.getCommands()
+            if d:
+                paths.append(f'<path fill="currentColor" d="{d}"/>')
+
+            x_cursor += glyph_set[glyph_name].width
+
+        total_width = x_cursor * scale
+        # viewBox: y-up coords — ascender is negative (above baseline), height spans ascender to descender
+        vb_x = 0.0
+        vb_y = -ascender * scale
+        vb_w = total_width
+        vb_h = (ascender - descender) * scale
+
+        display_scale = 1.4375
+        svg_width = total_width * display_scale
+        svg_height = vb_h * display_scale
+
+        svg = (
+            f'<svg width="{svg_width:f}" height="{svg_height:f}" '
+            f'viewBox="{vb_x:f} {vb_y:f} {vb_w:f} {vb_h:f}" '
+            f'data-scale="{display_scale:f}" '
+            f'xmlns="http://www.w3.org/2000/svg">'
+            f'{"".join(paths)}'
+            f'</svg>'
+        )
+        return svg
+    finally:
+        tt.close()
+
+
 def create_app(fonts_dir: Path) -> web.Application:
     """Create and configure the aiohttp application."""
     font_cache: dict[str, list[dict]] = scan_fonts(fonts_dir)
@@ -209,10 +300,10 @@ def create_app(fonts_dir: Path) -> web.Application:
         nonlocal font_cache
         # Rescan on each request (font dir is small)
         font_cache = scan_fonts(fonts_dir)
-        return web.json_response({
-            "version": PROTOCOL_VERSION,
-            "fontFiles": font_cache,
-        })
+        return web.json_response(
+            {"version": PROTOCOL_VERSION, "fontFiles": font_cache},
+            headers={"Cache-Control": "no-cache"},
+        )
 
     async def handle_font_file(request: web.Request) -> web.Response:
         file_path = request.query.get("file", "")
@@ -239,13 +330,36 @@ def create_app(fonts_dir: Path) -> web.Application:
         return web.json_response({"canOpen": True})
 
     async def handle_font_preview(request: web.Request) -> web.Response:
-        # Return a minimal empty SVG — Figma will still show fonts, just no preview
+        file_path = request.query.get("file", "")
+        font_size = float(request.query.get("font_size", "12"))
         family = request.query.get("family", "Font")
-        svg = (
-            '<svg width="180" height="21" viewBox="0 0 125 12" xmlns="http://www.w3.org/2000/svg">'
-            f'<text x="0" y="10" font-size="10" font-family="{family}" fill="currentColor">'
-            f'{family}</text></svg>'
-        )
+        postscript = request.query.get("postscript", "")
+
+        if not file_path:
+            return web.Response(status=400, text="Missing 'file' parameter")
+
+        # Path traversal protection
+        requested = Path(file_path).resolve()
+        if not str(requested).startswith(str(resolved_fonts_dir) + os.sep) and requested != resolved_fonts_dir:
+            return web.Response(status=403, text="Forbidden")
+
+        if not requested.is_file():
+            return web.Response(status=404, text="Font not found")
+
+        try:
+            mtime = int(requested.stat().st_mtime)
+            svg = _render_font_preview(str(requested), font_size, family, postscript, mtime)
+        except Exception as e:
+            print(f"Warning: font preview failed for {file_path}: {e}")
+            # Fallback: empty SVG stub
+            safe_family = xml_escape(family)
+            svg = (
+                '<svg width="180" height="21" viewBox="0 0 125 12" '
+                'xmlns="http://www.w3.org/2000/svg">'
+                f'<text x="0" y="10" font-size="10" fill="currentColor">'
+                f'{safe_family}</text></svg>'
+            )
+
         return web.Response(
             text=svg,
             content_type="image/svg+xml",

@@ -8,17 +8,17 @@
         {
           "header": "User-Agent",
           "operation": "set",
-          "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
         },
         {
           "header": "Sec-CH-UA-Platform",
           "operation": "set",
-          "value": "\"Windows\""
+          "value": "\"macOS\""
         },
         {
           "header": "Sec-CH-UA-Platform-Version",
           "operation": "set",
-          "value": "\"10.0.0\""
+          "value": "\"15.3.0\""
         }
       ]
     },
