@@ -35,6 +35,44 @@ Object.defineProperty(navigator, "userAgent", {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
 });
 
+// Remap Ctrl → Meta for keyboard shortcuts.
+// Figma expects Cmd (metaKey) on "macOS", but on Linux the user presses Ctrl.
+// Intercept in capture phase, suppress original, dispatch clone with metaKey.
+(function () {
+  // Browser-level shortcuts that must NOT be remapped
+  const BROWSER_KEYS = new Set([
+    "Tab", "t", "T", "w", "W", "n", "N",
+    "l", "L", "r", "R", "F5", "F12",
+  ]);
+
+  function remapEvent(e) {
+    if (!e.ctrlKey || e.metaKey) return;
+    if (BROWSER_KEYS.has(e.key)) return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    const clone = new KeyboardEvent(e.type, {
+      key: e.key,
+      code: e.code,
+      keyCode: e.keyCode,
+      which: e.which,
+      ctrlKey: false,
+      metaKey: true,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      repeat: e.repeat,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    e.target.dispatchEvent(clone);
+  }
+
+  document.addEventListener("keydown", remapEvent, true);
+  document.addEventListener("keyup", remapEvent, true);
+})();
+
 // Override User-Agent Client Hints API if available
 if (navigator.userAgentData) {
   Object.defineProperty(navigator, "userAgentData", {
