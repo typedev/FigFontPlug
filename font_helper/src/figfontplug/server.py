@@ -23,7 +23,7 @@ PROTOCOL_VERSION = 23
 PACKAGE_VERSION = "126.1.2"
 DEFAULT_PORT = 44950
 DEFAULT_FONTS_DIR = Path.home() / "figma-fonts"
-FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
+FONT_EXTENSIONS = {".ttf", ".otf", ".ttc", ".woff", ".woff2"}
 DEBOUNCE_SECONDS = 2.0
 SSE_HEARTBEAT_SECONDS = 30
 
@@ -53,13 +53,14 @@ def scan_fonts(fonts_dir: Path) -> dict[str, list[dict]]:
 def _extract_faces(path: Path) -> list[dict]:
     """Extract font face metadata from a font file."""
     faces = []
-    suffix = path.suffix.lower()
     mtime = int(path.stat().st_mtime)
 
-    if suffix == ".ttc":
-        tt = TTFont(path, fontNumber=0)
-        num_fonts = tt.reader.numFonts
-        tt.close()
+    # Detect collections (TTC, WOFF2 collections) via reader metadata
+    tt = TTFont(path, fontNumber=0)
+    num_fonts = getattr(tt.reader, "numFonts", 1)
+    tt.close()
+
+    if num_fonts > 1:
         for i in range(num_fonts):
             faces.extend(_read_face(path, mtime, font_number=i))
     else:
@@ -95,6 +96,10 @@ def _read_face(path: Path, mtime: int, font_number: int = 0) -> list[dict]:
         if "fvar" in tt:
             fvar = tt["fvar"]
 
+            # For variable fonts, prefer nameID 16 (Typographic Family) — nameID 1
+            # may include style (e.g. "Foo Regular") which breaks instance grouping
+            var_family = _get_name(name_table, 16) or family
+
             # Build axes info (same for all instances, only value differs)
             axes_info = []
             for axis in fvar.axes:
@@ -108,6 +113,9 @@ def _read_face(path: Path, mtime: int, font_number: int = 0) -> list[dict]:
                     "hidden": bool(getattr(axis, "flags", 0) & 0x0001),
                 })
 
+            # nameID 25 = Variations PostScript Name Prefix (OpenType spec)
+            var_ps_prefix = _get_name(name_table, 25) or var_family.replace(" ", "")
+
             instances = []
             for inst in fvar.instances:
                 sub_id = getattr(inst, "subfamilyNameID", None)
@@ -116,7 +124,7 @@ def _read_face(path: Path, mtime: int, font_number: int = 0) -> list[dict]:
                 if ps_id and ps_id != 0xFFFF:
                     inst_ps = _get_name(name_table, ps_id)
                 else:
-                    inst_ps = f"{family.replace(' ', '')}-{inst_style.replace(' ', '')}"
+                    inst_ps = f"{var_ps_prefix}-{inst_style.replace(' ', '')}"
 
                 inst_weight = int(inst.coordinates.get("wght", weight))
                 inst_stretch = _wdth_to_width_class(inst.coordinates.get("wdth", None), stretch)
@@ -132,7 +140,7 @@ def _read_face(path: Path, mtime: int, font_number: int = 0) -> list[dict]:
                     })
 
                 instances.append({
-                    "family": family,
+                    "family": var_family,
                     "style": inst_style,
                     "postscript": inst_ps,
                     "weight": inst_weight,
@@ -206,14 +214,13 @@ def _render_font_preview(
     - data-scale attribute on SVG element
     """
     path = Path(file_path)
-    suffix = path.suffix.lower()
 
-    # For .ttc files, find the font index matching the postscript name
+    # For font collections, find the font index matching the postscript name
     font_number = 0
-    if suffix == ".ttc":
-        tt_probe = TTFont(path, fontNumber=0)
-        num_fonts = tt_probe.reader.numFonts
-        tt_probe.close()
+    tt_probe = TTFont(path, fontNumber=0)
+    num_fonts = getattr(tt_probe.reader, "numFonts", 1)
+    tt_probe.close()
+    if num_fonts > 1:
         for i in range(num_fonts):
             tt_try = TTFont(path, fontNumber=i)
             ps = _get_name(tt_try["name"], 6)
